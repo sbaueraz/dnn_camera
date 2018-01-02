@@ -1,0 +1,14 @@
+{
+  "name": "dnn_camera",
+  "version": "1.0.0",
+  "description": "NodeJS project using OpenCV image classification and Raspberry Pi camera",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Scott Bauer <scott@bauerfarm.com>",
+  "license": "ISC",
+  "dependencies": {
+    "opencv4nodejs": "^2.30.0"
+  }
+}
