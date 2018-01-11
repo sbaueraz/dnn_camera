@@ -2,6 +2,22 @@ const cv = require('opencv4nodejs');
 const fs = require('fs');
 const path = require('path');
 
+var express = require('express');
+var app = express();
+var router = express.Router();
+
+const child_process = require('child_process');
+
+app.use('/js', express.static(__dirname + '/js'));
+app.use('/img', express.static(__dirname + '/img'));
+app.use('/css', express.static(__dirname + '/css'));
+app.use(express.static(__dirname + '/public'));
+
+app.listen(3000);
+
+// all of our routes will be prefixed with /api
+app.use('/api', router);
+
 console.logCopy = console.log.bind(console);
 
 console.log = function()
@@ -92,32 +108,42 @@ const classifyImg = (img) => {
   return result;
 }
 
-const testData = [
-  {
-    image: 'data/banana.jpg',
-    label: 'banana'
-  },
-  {
-    image: 'data/husky.jpg',
-    label: 'husky'
-  },
-  {
-    image: 'data/car.jpeg',
-    label: 'car'
-  },
-  {
-    image: 'data/lenna.png',
-    label: 'lenna'
-  }
-];
-
-testData.forEach((data) => {
-  console.log("Loading ",data.image)
-  const img = cv.imread(data.image);
-  console.log('%s: ', data.label);
-  const predictions = classifyImg(img);
-  predictions.forEach(p => console.log(p));
-  console.log();
-
-  //cv.imshowWait('img', img);
+router.get('/getImage', function(req, res) {
+    returnFile('/var/tmp/snap.jpg',res);      
 });
+
+let args = ['-w', '1024', '-h', '768', '-o', '/var/tmp/snap.jpg', '-t', '1'];
+let spawn = child_process.spawn('raspistill', args);
+
+function returnFile(image, res) {
+    fs.readFile(image, function(err, data) {
+        res.writeHead(200, {'Content-Type': 'image/jpeg'});
+        res.end(data); // Send the file data to the browser.
+
+        let args = ['-w', '1024', '-h', '768', '-o', '/var/tmp/snap.tmp.jpg', '-t', '1','-rot','180'];
+        let spawn = child_process.spawn('raspistill', args);
+        spawn.on('exit', (code) => {
+            console.log("raspistill exit code:",code);
+            fs.unlinkSync(image);
+            fs.renameSync('/var/tmp/snap.tmp.jpg', image);
+        });
+    });
+}
+
+/*setInterval(function() {
+//console.log("Taking photo");
+
+    //console.log('A photo is saved with exit code, ', code);
+    console.log(" ");
+    testData.forEach((data) => {
+        //console.log("Loading ",data.image)
+        const img = cv.imread(data.image);
+        //console.log('%s: ', data.label);
+        const predictions = classifyImg(img);
+        predictions.forEach(p => console.log(p));
+        //console.log();
+    });
+});
+},100);
+*/
+
