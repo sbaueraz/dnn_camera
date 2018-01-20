@@ -1,6 +1,8 @@
-const cv = require('opencv4nodejs');
+var config = require('./config');
 const fs = require('fs');
 const path = require('path');
+const RaspiCam = require('raspicam');
+const spawn = require('child_process').spawn;
 
 var express = require('express');
 var app = express();
@@ -17,6 +19,13 @@ app.listen(3000);
 
 // all of our routes will be prefixed with /api
 app.use('/api', router);
+
+var scanning = false;
+var matches = [];
+var snapFile = config.camera.temp_dir + "/snap.jpg";
+var detectedFile = config.camera.temp_dir + "/detected.png";
+var tempFilePNG = config.camera.temp_dir + "/d.png";
+var tempFile = config.camera.temp_dir + "/d";
 
 console.logCopy = console.log.bind(console);
 
@@ -51,99 +60,91 @@ console.log = function()
     }
 };
 
-if (!cv.xmodules.dnn) {
-  return console.log('exiting: opencv4nodejs compiled without dnn module');
-}
-
-// replace with path where you unzipped inception model
-const inceptionModelPath = '.';
-
-const modelFile = path.resolve(inceptionModelPath, 'tensorflow_inception_graph.pb');
-const classNamesFile = path.resolve(inceptionModelPath, 'imagenet_comp_graph_label_strings.txt');
-if (!fs.existsSync(modelFile) || !fs.existsSync(classNamesFile)) {
-  console.log('exiting: could not find inception model');
-  console.log('download the model from: https://storage.googleapis.com/download.tensorflow.org/models/inception5h.zip');
-  return;
-}
-
-// read classNames and store them in an array
-const classNames = fs.readFileSync(classNamesFile).toString().split("\n");
-
-// initialize tensorflow inception model from modelFile
-const net = cv.readNetFromTensorflow(modelFile);
-
-const classifyImg = (img) => {
-  // inception model works with 224 x 224 images, so we resize
-  // our input images and pad the image with white pixels to
-  // make the images have the same width and height
-  const maxImgDim = 224;
-  const white = new cv.Vec(255, 255, 255);
-  const imgResized = img.resizeToMax(maxImgDim).padToSquare(white);
-
-  // network accepts blobs as input
-  const inputBlob = cv.blobFromImage(imgResized);
-  net.setInput(inputBlob);
-
-  // forward pass input through entire network, will return
-  // classification result as 1xN Mat with confidences of each class
-  const outputBlob = net.forward();
-
-  // find all labels with a minimum confidence
-  const minConfidence = 0.05;
-  const locations =
-    outputBlob
-      .threshold(minConfidence, 1, cv.THRESH_BINARY)
-      .convertTo(cv.CV_8U)
-      .findNonZero();
-
-  const result =
-    locations.map(pt => ({
-      confidence: parseInt(outputBlob.at(0, pt.x) * 100) / 100,
-      className: classNames[pt.x]
-    }))
-      // sort result by confidence
-      .sort((r0, r1) => r1.confidence - r0.confidence)
-      .map(res => `${res.className} (${res.confidence})`);
-
-  return result;
-}
+router.get('/getMatches', function(req, res) {
+    res.json(matches);
+});
 
 router.get('/getImage', function(req, res) {
-    returnFile('/var/tmp/snap.jpg',res);      
+    returnFile(snapFile,res);      
 });
 
-let args = ['-w', '1024', '-h', '768', '-o', '/var/tmp/snap.jpg', '-t', '1'];
-let spawn = child_process.spawn('raspistill', args);
+router.get('/getDetected', function(req, res) {
+    returnFile(detectedFile,res);      
+});
+
+var opts = {
+        mode: "photo",
+        quality: config.camera.quality,
+        width: config.camera.width,
+        height: config.camera.height,
+        output: snapFile,
+        log: console.logCopy,
+        rotation: config.camera.rotation,
+        burst: true,
+        timelapse: config.camera.timelapse,
+        timeout: 999999999};
+
+var camera = new RaspiCam(opts);
+
+camera.start();
+
+/*camera.on("read", function(err, timestamp, filename){ 
+    if (!scanning) {
+        scanning = true;
+
+
+        scanning = false;
+    }
+});*/
+
+//listen for the process to exit when the timeout has been reached
+camera.on("exit", function(){
+    console.log("Restarting camera");
+    camera.start();
+});
+
+// darknet detector test voc.data tiny-yolo-voc.cfg tiny-yolo-voc.weights -out /var/tmp/detected
+var detector = spawn('darknet', ['detector','test',config.detector.datacfg,config.detector.cfgfile,config.detector.weightfile,'-out',tempFile]);
+
+detector.stdout.on('data', (data) => {
+    var msg = data.toString('utf8');
+    //console.log('detector stdout:', msg);
+    var lines = msg.split('\n');
+
+    for (var i = 0;i < lines.length;i ++) {
+
+        if (lines[i].includes('Enter Image Path:')) {
+            fs.rename(tempFilePNG, detectedFile, function(){});
+            detector.stdin.write(snapFile+"\n");
+        }
+        else if (lines[i].includes('%') && lines[i].includes(':')) {
+            //chair: 32%
+            var detected = lines[i].split(':');
+            var prediction = {};
+
+            prediction.timestamp  = new Date();
+            prediction.className  = detected[0];
+            prediction.confidence = detected[1];
+
+            matches.push(prediction);
+
+            while (matches.length > 50)
+                matches.shift();
+        }
+    }
+});
+
+detector.stderr.on('data', (data) => {
+  console.error('detector stderr:', data.toString('utf8'));
+});
 
 function returnFile(image, res) {
+    var type='image/jpeg';
+    if (image.endsWith('.png'))
+        type='image/png';
     fs.readFile(image, function(err, data) {
-        res.writeHead(200, {'Content-Type': 'image/jpeg'});
+        res.writeHead(200, {'Content-Type': type});
         res.end(data); // Send the file data to the browser.
-
-        let args = ['-w', '1024', '-h', '768', '-o', '/var/tmp/snap.tmp.jpg', '-t', '1','-rot','180'];
-        let spawn = child_process.spawn('raspistill', args);
-        spawn.on('exit', (code) => {
-            console.log("raspistill exit code:",code);
-            fs.unlinkSync(image);
-            fs.renameSync('/var/tmp/snap.tmp.jpg', image);
-        });
     });
 }
-
-/*setInterval(function() {
-//console.log("Taking photo");
-
-    //console.log('A photo is saved with exit code, ', code);
-    console.log(" ");
-    testData.forEach((data) => {
-        //console.log("Loading ",data.image)
-        const img = cv.imread(data.image);
-        //console.log('%s: ', data.label);
-        const predictions = classifyImg(img);
-        predictions.forEach(p => console.log(p));
-        //console.log();
-    });
-});
-},100);
-*/
 
