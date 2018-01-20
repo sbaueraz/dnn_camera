@@ -1,0 +1,16 @@
+{
+    "camera": {
+        "temp_dir": "/var/tmp",
+        "width": 1280,
+        "height": 720,
+        "rotation": 180,
+        "quality": 50,
+        "timelapse": 450
+    },
+    "detector": {
+        "datacfg": "voc.data",
+        "cfgfile": "tiny-yolo-voc.cfg",
+        "weightfile": "tiny-yolo-voc.weights",
+        "outfile": "/var/tmp/d"
+    }
+}
